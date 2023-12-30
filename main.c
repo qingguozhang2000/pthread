@@ -190,6 +190,10 @@ void on_finish()
 {
     // free dynamically allocated memory
     free(tables);
+
+    for (int i=0; i<name_count; i++) {
+        free(names[i]);
+    }
     free(names);
 }
 
@@ -265,7 +269,6 @@ void on_guest_leaving(struct Guest *p_guest)
     on_table_available(p_guest->p_table);
 
     // free dynamic allocated memory for the guest
-    free(p_guest->name);
     free(p_guest);
 }
 
