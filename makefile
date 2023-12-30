@@ -7,4 +7,4 @@ demo.exe: demo.c
 	gcc -g -pthread demo.c -o demo.exe
 
 clean:
-	rm -rf a.out* demo.exe*
+	rm -rf a.out* *.exe* 

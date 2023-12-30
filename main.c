@@ -6,7 +6,6 @@
 #include <string.h>
 
 #define NUM_THREADS 5
-#define MAX_TABLE 100
 
 struct Table
 {
@@ -31,44 +30,44 @@ struct GuestQueue
     struct Guest *p_queue_tail;
 };
 
+int max_party_size;
 int table_count;
-struct Table tables[MAX_TABLE];
+struct Table *tables;
+
+int name_count;
+char **names;
+
 struct GuestQueue guest_queue;
 int last_guest_id = 0;
 
+pthread_mutex_t mutext;
+
 void on_start();
 void on_finish();
-void on_guest_arriving(const char *part_name, int party_count);
+void on_guest_arriving(char *part_name, int party_size);
 void on_guest_leaving(struct Guest *p_guest);
 void on_table_available(struct Table *p_table);
-void *worker(void *arguments);
+
+void load_tables();
+void load_names();
+int line_count(FILE *fd);
+
+void print_queue();
+
+void *guest_thread_worker();
 
 int main(void)
 {
     on_start();
 
-    pthread_t threads[NUM_THREADS];
-    int thread_args[NUM_THREADS];
-    int i, rc;
+    pthread_t guest_th;
 
-    // create all threads one by one
-    for (i = 0; i < NUM_THREADS; i++)
-    {
-        printf("In main: Creating thread %d.\n", i);
-        thread_args[i] = i;
-        rc = pthread_create(&threads[i], NULL, worker, &thread_args[i]);
-        assert(!rc);
-    }
+    assert(!pthread_create(&guest_th, NULL, guest_thread_worker, NULL));
+    assert(!pthread_mutex_init(&mutext, NULL));
+    assert(!pthread_mutex_destroy(&mutext));
+    assert(!pthread_join(guest_th, NULL));
 
-    printf("In main: All threads are created.\n");
-
-    // wait for each thread to complete
-    for (i = 0; i < NUM_THREADS; i++)
-    {
-        rc = pthread_join(threads[i], NULL);
-        assert(!rc);
-        printf("In main: Thread %d has ended.\n", i);
-    }
+    print_queue();
 
     on_finish();
     printf("Main program has ended.\n");
@@ -76,53 +75,135 @@ int main(void)
     return 0;
 }
 
-void *worker(void *arguments)
+void *guest_thread_worker()
 {
-    int index = *((int *)arguments);
-    int sleep_time = 1 + rand() % NUM_THREADS;
+    for (int i = 0; i < 10; i++)
+    {
+        int sleep_time = rand() % 1000000;
+        usleep(sleep_time);
 
-    printf("Thread %d: Started.\n", index);
-    printf("Thread %d: Will be sleeping for %d seconds.\n", index, sleep_time);
+        int j = rand() % name_count;
+        char *name = names[j];
+        int party_size = rand() % max_party_size + 1;
 
-    sleep(sleep_time);
-
-    printf("Thread %d: Ended.\n", index);
+        on_guest_arriving(name, party_size);
+    }
 
     return NULL;
 }
 
 void on_start()
 {
+    srand(time(NULL));
+
     guest_queue.p_queue_head = NULL;
     guest_queue.p_queue_tail = NULL;
 
-    int i = 0;
-    char line[10];
-    char *s;
-    FILE *fd = fopen("table.txt", "r");
-    while (s = fgets(line, 10, fd)) {
-        tables[i].id = i;
-        tables[i].capacity = atoi(s);
-        tables[i].p_guest = NULL;
-        i++;
+    load_tables();
+    load_names();
+}
+
+int line_count(FILE *fd)
+{
+    char ch;
+    int lines = 0;
+
+    while (!feof(fd))
+    {
+        ch = fgetc(fd);
+        if (ch == '\n')
+        {
+            lines++;
+        }
     }
 
-    table_count = i;
+    rewind(fd);
+    return lines;
+}
+
+void load_tables()
+{
+    FILE *fd = fopen("table.txt", "r");
+    if (fd == NULL)
+    {
+        perror("Unable to open table.txt");
+    }
+
+    max_party_size = 0;
+    table_count = line_count(fd);
+    tables = malloc(table_count * sizeof(struct Table));
+
+    char line[10];
+    for (int i = 0; i < table_count; i++)
+    {
+        char *s = fgets(line, 10, fd);
+        if (!s)
+        {
+            break;
+        }
+
+        int capacity = atoi(s);
+
+        tables[i].id = i;
+        tables[i].capacity = capacity;
+        tables[i].p_guest = NULL;
+
+        if (max_party_size < capacity)
+        {
+            max_party_size = capacity;
+        }
+    }
+
+    fclose(fd);
+}
+
+void load_names()
+{
+    FILE *fd = fopen("name.txt", "r");
+    if (fd == NULL)
+    {
+        perror("Unable to open name.txt");
+    }
+
+    name_count = line_count(fd);
+    names = malloc(name_count * sizeof(char *));
+
+    char line[15];
+    for (int i = 0; i < name_count; i++)
+    {
+        char *name = fgets(line, 15, fd);
+        int n = strlen(name);
+        names[i] = malloc(n);
+        for (int j = 0; j < n; j++)
+        {
+            if (name[j] != '\n')
+            {
+                names[i][j] = name[j];
+            }
+        }
+    }
+
+    fclose(fd);
 }
 
 void on_finish()
 {
-    // TODO: free dynamically allocated memory
+    // free dynamically allocated memory
+    free(tables);
+    free(names);
 }
 
-void on_guest_arriving(const char *party_name, int party_count)
+void on_guest_arriving(char *party_name, int party_size)
 {
+    printf("Guest arrived: %s - %d people\n", party_name, party_size);
+    pthread_mutex_lock(&mutext);
+
     last_guest_id++;
 
     struct Guest *p_guest = malloc(sizeof(struct Guest));
     p_guest->id = last_guest_id;
     p_guest->name = party_name;
-    p_guest->count = party_count;
+    p_guest->count = party_size;
     p_guest->p_table = NULL;
     p_guest->p_prev = NULL;
     p_guest->p_next = NULL;
@@ -138,6 +219,8 @@ void on_guest_arriving(const char *party_name, int party_count)
         guest_queue.p_queue_tail->p_next = p_guest;
         guest_queue.p_queue_tail = p_guest;
     }
+
+    pthread_mutex_unlock(&mutext);
 }
 
 void on_table_available(struct Table *p_table)
@@ -156,7 +239,7 @@ void on_table_available(struct Table *p_table)
 
     // if we find a matching guest party for the table,
     // remove the guest from the waiting queue
-    // and assign the guest to the table 
+    // and assign the guest to the table
     if (p_guest != NULL)
     {
         // remove guest from waiting queue
@@ -184,4 +267,15 @@ void on_guest_leaving(struct Guest *p_guest)
     // free dynamic allocated memory for the guest
     free(p_guest->name);
     free(p_guest);
+}
+
+void print_queue()
+{
+    printf("\n\nCurrent waiting queue:\n\n");
+
+    struct Guest *p = guest_queue.p_queue_head;
+    while (p != NULL) {
+        printf("Guest party %d: %s - %d people\n", p->id, p->name, p->count);
+        p = p->p_next;
+    }
 }
