@@ -1,10 +1,7 @@
-all: a.out demo.exe
+all: a.out
 
-a.out: main.c
-	gcc -g -pthread main.c -o a.out
-
-demo.exe: demo.c
-	gcc -g -pthread demo.c -o demo.exe
+a.out: main.c common.c guest-wait.c guest-dine.c
+	gcc -g -pthread main.c common.c guest-wait.c guest-dine.c -o a.out
 
 clean:
-	rm -rf a.out* *.exe* 
+	rm -rf a.out*
